@@ -1,0 +1,83 @@
+name: Build, Test, and Deploy to Github Pages
+
+on:
+  push:
+    branches:    
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Build and Deploy
+    steps:
+      - name: Check out code 
+        uses: actions/checkout@v2
+      - name: Edit the deploy URL in package.json (TODO put this in a .py file)
+        run: |
+          import re
+          import os
+          with open('package.json', 'r', encoding='utf-8') as package:
+            contents = package.read();
+          owner = os.environ["GITHUB_REPOSITORY_OWNER"].lower()
+          repo = re.sub(f'^{owner}/', '', os.environ["GITHUB_REPOSITORY"].lower())
+          contents = re.sub('.*"homepage": .*', f'  "homepage": "https://{owner}.github.io/{repo}/",', contents)
+        shell: python
+      - name: Create the javascript word banks from plaintext word bank (TODO put this in a .py file)
+        run: |
+          with open('src/data/answers.js', 'w', encoding='utf-8') as answers, open('src/data/words.js', 'w', encoding='utf-8') as guesses, open('wordbank.txt', encoding='utf-8') as rawwords:
+            answers.write('const answers = [\n')
+            guesses.write('const words = {\n')
+            for word in rawwords:
+              if len(word.strip())==5:
+                answers.write(f"  '{word.strip()}',\n")
+                guesses.write(f"  {word.strip()}: true,\n")
+            answers.write("];\n\nexport default answers\n")
+            guesses.write("};\n\nexport default words\n")
+        shell: python
+      - name: Create keyboard from plaintext layout (TODO put this in a .py file)
+        run: |
+          with open('keyboard.txt', encoding='utf-8') as keyboard, open('src/constants.js', 'w', encoding='utf-8') as constants:
+            keyboardRows = []
+            for line in keyboard:
+              if len(line.strip())>0:
+                keyboardRows += [line.strip()]
+            letters = sorted([letter for row in keyboardRows for letter in row])
+            constants.write('export const keyboardLetters = [\n')
+            for row in keyboardRows:
+              temp = "', '".join([key.upper() for key in row])
+              constants.write(f"  ['{temp}'],\n")
+            constants.write("];\n\nexport const letters = [\n")
+            for letter in letters:
+              constants.write(f"  '{letter.upper()}',\n")
+            constants.write("];\n\nexport const status = {\n  green: 'green',\n  yellow: 'yellow',\n  gray: 'gray',\n  unguessed: 'unguessed',\n};\n")
+        shell: python
+      - name: Commit changes resulting from plaintext files
+        run: |
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git checkout -B pre-gh-pages
+          git add .
+          git commit -m "Automatically updating words.js, answers.js and constants.js"
+          git push -u origin pre-gh-pages
+      - name: Set up Node
+        uses: actions/setup-node@v2
+        with:
+          node-version: 16
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Run tests
+        run: npm run test
+      - name: Build and save to gh-pages branch, remove pre-gh-pages
+        run: |
+          git remote set-url origin https://git:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
+          git checkout pre-gh-pages
+          npm run deploy -- -u "github-actions-bot <support+actions@github.com>"
+          git checkout main
+          git branch -d pre-gh-pages
+          git push origin --delete pre-gh-pages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # React insists on treating warnings as errors if it thinks it is running on CI.
+          # So on Github Actions it refuses to build perfectly valid code and cries until you call it a Licensed Software Engineer.
+          CI: false
